@@ -1,0 +1,145 @@
+#!/bin/bash
+# fanctl - Mac Mini fan control for applesmc_t2
+
+FAN_BASE="/sys/devices/LNXSYSTM:00/LNXSYBUS:00/PNP0A08:00/device:103/APP0001:00"
+CONF="/etc/fanctl.conf"
+MODE_FILE="/run/fanctl-mode"
+
+# Defaults — overridden by /etc/fanctl.conf
+SENSORS="temp2 temp4 temp5 temp6 temp7 temp8 temp9 temp13 temp22"
+CURVE="45:1700 55:2500 65:3200 72:3800 78:4400"
+MIN_RPM=1700
+MAX_RPM=4400
+OVERCLOCK_RPM=5000
+INTERVAL=3
+
+[ -f "$CONF" ] && source "$CONF"
+
+fan_auto() {
+    echo 0 > "$FAN_BASE/fan1_manual"
+}
+
+fan_set() {
+    echo 1 > "$FAN_BASE/fan1_manual"
+    echo "$1" > "$FAN_BASE/fan1_output"
+}
+
+get_max_temp() {
+    local max=0
+    for sensor in $SENSORS; do
+        local val
+        val=$(cat "$FAN_BASE/${sensor}_input" 2>/dev/null)
+        [ -z "$val" ] && continue
+        local t=$((val / 1000))
+        [ "$t" -gt "$max" ] && max=$t
+    done
+    echo "$max"
+}
+
+interpolate() {
+    local temp=$1
+    local points=($CURVE)
+
+    local first_t=${points[0]%%:*}
+    local first_r=${points[0]##*:}
+    [ "$temp" -le "$first_t" ] && echo "$first_r" && return
+
+    local last_t=${points[-1]%%:*}
+    local last_r=${points[-1]##*:}
+    [ "$temp" -ge "$last_t" ] && echo "$last_r" && return
+
+    local prev_t=$first_t prev_r=$first_r
+    for point in "${points[@]}"; do
+        local next_t=${point%%:*}
+        local next_r=${point##*:}
+        if [ "$temp" -lt "$next_t" ]; then
+            echo $(( prev_r + (next_r - prev_r) * (temp - prev_t) / (next_t - prev_t) ))
+            return
+        fi
+        prev_t=$next_t
+        prev_r=$next_r
+    done
+    echo "$last_r"
+}
+
+run_daemon() {
+    [ ! -f "$MODE_FILE" ] && echo "dynamic" > "$MODE_FILE"
+    trap 'fan_auto; rm -f "$MODE_FILE"; exit 0' SIGTERM SIGINT
+
+    while true; do
+        local mode
+        mode=$(cat "$MODE_FILE" 2>/dev/null || echo "dynamic")
+
+        case "$mode" in
+            auto)
+                fan_auto
+                ;;
+            dynamic)
+                local temp rpm
+                temp=$(get_max_temp)
+                rpm=$(interpolate "$temp")
+                [ "$rpm" -lt "$MIN_RPM" ] && rpm=$MIN_RPM
+                fan_set "$rpm"
+                ;;
+            [0-9]*)
+                fan_set "$mode"
+                ;;
+        esac
+
+        sleep "$INTERVAL"
+    done
+}
+
+cmd_status() {
+    local mode rpm manual temp
+    mode=$(cat "$MODE_FILE" 2>/dev/null || echo "not running")
+    rpm=$(cat "$FAN_BASE/fan1_input" 2>/dev/null || echo "?")
+    manual=$(cat "$FAN_BASE/fan1_manual" 2>/dev/null || echo "?")
+    temp=$(get_max_temp)
+
+    echo "Mode:     $mode"
+    echo "Fan:      ${rpm} RPM"
+    echo "Manual:   $manual"
+    echo "Max temp: ${temp}°C"
+}
+
+case "$1" in
+    daemon)
+        run_daemon
+        ;;
+    auto)
+        echo "auto" > "$MODE_FILE"
+        fan_auto
+        echo "Fan returned to firmware control"
+        ;;
+    dynamic)
+        echo "dynamic" > "$MODE_FILE"
+        echo "Fan set to dynamic (temp-based curve)"
+        ;;
+    set)
+        if [ -z "$2" ]; then
+            echo "Usage: fanctl set <RPM>"
+            exit 1
+        fi
+        echo "$2" > "$MODE_FILE"
+        fan_set "$2"
+        echo "Fan set to $2 RPM"
+        ;;
+    turbo)
+        echo "$OVERCLOCK_RPM" > "$MODE_FILE"
+        fan_set "$OVERCLOCK_RPM"
+        echo "Fan set to turbo (${OVERCLOCK_RPM} RPM)"
+        ;;
+    status)
+        cmd_status
+        ;;
+    *)
+        echo "Usage: fanctl {auto|dynamic|set <RPM>|turbo|status}"
+        echo ""
+        echo "  auto          firmware controls fan (default idle)"
+        echo "  dynamic       temperature-based curve (edit /etc/fanctl.conf)"
+        echo "  set <RPM>     lock fan to specific RPM (e.g. fanctl set 3500)"
+        echo "  turbo         max speed (${OVERCLOCK_RPM} RPM, edit OVERCLOCK_RPM in config)"
+        echo "  status        show current fan/temp state"
+        ;;
+esac

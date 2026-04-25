@@ -1,0 +1,13 @@
+[Unit]
+Description=Mac Fan Control (applesmc_t2)
+After=sysinit.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/fanctl daemon
+ExecStop=/usr/local/bin/fanctl auto
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
