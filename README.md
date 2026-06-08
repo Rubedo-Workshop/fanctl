@@ -48,10 +48,14 @@ The daemon uses the **maximum** temp across all monitored sensors, so it reacts 
 | 55°C | 2500 |
 | 65°C | 3200 |
 | 72°C | 3800 |
-| ≥ 78°C | 4400 (maximum) |
+| ≥ 78°C | 4400 |
+| ≥ 85°C | 5000 (emergency turbo) |
+
+When temp hits `EMERGENCY_TEMP` (default 85°C), the daemon bypasses the curve and jumps straight to `OVERCLOCK_RPM`. It drops back to the normal curve once temps fall below the threshold.
 
 ## Hardware limits
 
 - Minimum RPM: 1700
 - Maximum RPM: 4400
 - `OVERCLOCK_RPM` in config defaults to 5000 — the hardware will cap it at its physical limit
+- `EMERGENCY_TEMP` in config defaults to 85°C — auto-triggers turbo in dynamic mode

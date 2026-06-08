@@ -11,6 +11,7 @@ CURVE="45:1700 55:2500 65:3200 72:3800 78:4400"
 MIN_RPM=1700
 MAX_RPM=4400
 OVERCLOCK_RPM=5000
+EMERGENCY_TEMP=85
 INTERVAL=3
 
 [ -f "$CONF" ] && source "$CONF"
@@ -77,8 +78,12 @@ run_daemon() {
             dynamic)
                 local temp rpm
                 temp=$(get_max_temp)
-                rpm=$(interpolate "$temp")
-                [ "$rpm" -lt "$MIN_RPM" ] && rpm=$MIN_RPM
+                if [ "$temp" -ge "$EMERGENCY_TEMP" ]; then
+                    rpm=$OVERCLOCK_RPM
+                else
+                    rpm=$(interpolate "$temp")
+                    [ "$rpm" -lt "$MIN_RPM" ] && rpm=$MIN_RPM
+                fi
                 fan_set "$rpm"
                 ;;
             [0-9]*)
